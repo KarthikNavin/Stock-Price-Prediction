@@ -1,0 +1,266 @@
+import pandas as pd
+import requests
+import re
+from bs4 import BeautifulSoup
+from textblob import TextBlob
+from datetime import datetime, timedelta
+from nltk.sentiment import SentimentIntensityAnalyzer
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from keras.models import Sequential
+from keras.layers import Conv1D,MaxPooling1D,Flatten,Dense,LSTM,SimpleRNN
+
+import nltk
+nltk.download('vader_lexicon')
+
+dataset = pd.read_csv(r'C:\Users\karth\Downloads\TSLA (3).csv')
+dataset.head()
+
+#Extracting News article titles
+def format_date(date_text):
+    if "Yesterday" in date_text:
+        return (datetime.now() - timedelta(days=1)).strftime("%d-%m-%Y")
+    elif "Today" in date_text:
+        return datetime.now().strftime("%d-%m-%Y")
+    elif re.match(r'^[A-Za-z]+, [A-Za-z]+\. \d{1,2}, \d{4}$', date_text):
+        return datetime.strptime(date_text, "%a, %b. %d, %Y").strftime("%d-%m-%Y")
+    elif re.match(r'^[A-Za-z]+, [A-Za-z]+ \d{1,2}, \d{4}$', date_text):  
+        return datetime.strptime(date_text, "%a, %b %d, %Y").strftime("%d-%m-%Y")
+    elif re.match(r'^[A-Za-z]+, [A-Za-z]+ \d{1,2}, \d{4}$', date_text):  
+        return datetime.strptime(date_text, "%a, %b %d, %Y").strftime("%d-%m-%Y")
+    elif re.match(r'^[A-Za-z]+, [A-Za-z]+ \d{1,2}$', date_text):  
+        date_text = date_text + ", 2023"
+        return datetime.strptime(date_text, "%a, %b %d, %Y").strftime("%d-%m-%Y")
+    elif re.match(r'^[A-Za-z]+, [A-Za-z]+\. \d{1,2}$', date_text):  
+        date_text = date_text + ", 2023"
+        return datetime.strptime(date_text, "%a, %b. %d, %Y").strftime("%d-%m-%Y")
+    else:
+        print("Unrecognized date format:", date_text)
+        return None
+
+pg_no = 130 #Extracting news articles from webpage having 130 pages
+data = {'Title': [], 'Date': [], 'Sentiment Analysis': []}
+
+
+#Applying sentiment analysis using VADER on extracted news titles
+sid = SentimentIntensityAnalyzer()
+
+print("Extracting news article titles from webpage : https://seekingalpha.com/symbol/TSLA/news")
+
+for i in range(1, pg_no + 1):
+
+    url_base = "https://seekingalpha.com/symbol/TSLA/news?page="
+    url = url_base + str(i)
+    response = requests.get(url)
+
+    if response.status_code == 200:
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        article_info = soup.find_all('div', class_='grow')
+        for info in article_info:
+            title_elem = info.find('h3', class_='text-share-text')
+            date_elem = info.find('span', class_='whitespace-nowrap sa-circle-divider-share-text-2')
+
+            if title_elem and date_elem:
+                title = title_elem.find('a')
+                date_text = date_elem.text.strip()
+                formatted_date = format_date(date_text)
+
+                if title.text.strip() not in data['Title']:
+                    # Use VADER for sentiment analysis
+                    polarity = sid.polarity_scores(title.text.strip())['compound']
+
+                    if polarity > 0:
+                        sentiment = 'Positive'
+                    elif polarity < 0:
+                        sentiment = 'Negative'
+                    else:
+                        sentiment = 'Neutral'
+
+                    data['Title'].append(title.text.strip())
+                    data['Date'].append(formatted_date)
+                    data['Sentiment Analysis'].append(sentiment)
+
+                    
+df = pd.DataFrame(data)
+
+df_set = pd.DataFrame(dataset)
+
+#converting date to required format
+df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y')
+df.head()
+
+df_set = df_set.sort_values(by='Date', ascending=False)
+df_set.head()
+
+df['Date'] = pd.to_datetime(df['Date'], format='%Y-%m-%d')
+df_set['Date'] = pd.to_datetime(df_set['Date'], format='%Y-%m-%d')
+
+grouped_sentiments = df.groupby('Date')['Sentiment Analysis'].agg(lambda x: x.mode().iloc[0]).reset_index()
+
+#merging datasets
+merged_df = pd.merge(df_set,grouped_sentiments, on='Date', how='left')
+
+print(merged_df)
+
+merged_df.head()
+
+#preprocessing stage
+from sklearn.preprocessing import MinMaxScaler
+# Min-Max scaling
+minmax = MinMaxScaler().fit(merged_df.iloc[:, 4:5].astype('float32'))
+df_log = minmax.transform(merged_df.iloc[:, 4:5].astype('float32'))
+df_log = pd.DataFrame(df_log)
+
+df_log.head()
+merged_df['Scaled_Close'] = df_log
+merged_df.head()
+
+sentiment_mapping = {'Negative': 0, 'Neutral': 1, 'Positive': 2}
+merged_df['Sentiment_Encoded'] = merged_df['Sentiment Analysis'].map(sentiment_mapping)
+
+merged_df.drop('Sentiment Analysis', axis=1, inplace=True)
+
+
+print(merged_df.head())
+
+merged_df.dropna(inplace=True)
+print(merged_df)
+
+#features = ['Open', 'High', 'Low', 'Volume','Sentiment_Encoded']
+#target = ['Scaled_Close']
+
+
+X = merged_df[['Open', 'High', 'Low', 'Volume', 'Sentiment_Encoded']].values
+y = merged_df['Scaled_Close'].values
+
+
+#Splitting data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+scaler = StandardScaler()
+
+X_train1 = scaler.fit_transform(X_train)
+X_test1 = scaler.transform(X_test)
+
+#CNN Model implementation
+
+X_train = X_train1.reshape(X_train1.shape[0], X_train1.shape[1], 1)
+X_test = X_test1.reshape(X_test1.shape[0], X_test1.shape[1], 1)
+
+model = Sequential()
+model.add(Conv1D(filters=64, kernel_size=3, activation='relu', input_shape=(X_train.shape[1], 1)))
+model.add(MaxPooling1D(pool_size=2))
+model.add(Flatten())
+model.add(Dense(64, activation='relu'))
+model.add(Dense(1, activation='linear'))
+
+
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+model.fit(X_train, y_train, epochs=10, batch_size=32, validation_data=(X_test, y_test))
+
+
+loss = model.evaluate(X_test, y_test)
+print(f'Mean Squared Error on Test Data: {loss}')
+
+
+predictions = model.predict(X_test)
+
+plt.figure(figsize=(12, 6))
+plt.plot(y_test, label='Actual', linestyle='-', color='blue')
+plt.plot(predictions, label='Predicted (CNN)', linestyle='-', color='orange')
+plt.title('Actual vs Predicted Stock Prices using CNN')
+plt.xlabel('Time')
+plt.ylabel('Scaled Close Price')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+#RNN model implementation
+
+X_train_rnn = X_train1.reshape(X_train1.shape[0], 1, X_train1.shape[1])
+X_test_rnn = X_test1.reshape(X_test1.shape[0], 1, X_test1.shape[1])
+
+
+model_rnn = Sequential()
+model_rnn.add(SimpleRNN(50, activation='relu', input_shape=(X_train_rnn.shape[1], X_train_rnn.shape[2])))
+model_rnn.add(Dense(1))
+model_rnn.compile(optimizer='adam', loss='mean_squared_error')
+
+
+model_rnn.fit(X_train_rnn, y_train, epochs=10, batch_size=32, validation_data=(X_test_rnn, y_test))
+
+
+predictions_rnn = model_rnn.predict(X_test_rnn)
+
+
+plt.figure(figsize=(12, 6))
+plt.plot(y_test, label='Actual', linestyle='-', color='blue')
+plt.plot(predictions_rnn, label='Predicted (RNN)', linestyle='-', color='orange')
+plt.title('Actual vs Predicted Stock Prices using RNN')
+plt.xlabel('Time')
+plt.ylabel('Scaled Close Price')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+#LSTM model implementation
+X_train_lstm = X_train1.reshape(X_train1.shape[0], X_train1.shape[1], 1)
+X_test_lstm = X_test1.reshape(X_test1.shape[0], X_test1.shape[1], 1)
+
+
+model_lstm = Sequential()
+model_lstm.add(LSTM(50, activation='relu', input_shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])))
+model_lstm.add(Dense(1))
+model_lstm.compile(optimizer='adam', loss='mean_squared_error')
+
+
+model_lstm.fit(X_train_lstm, y_train, epochs=10, batch_size=32, validation_data=(X_test_lstm, y_test))
+
+
+predictions_lstm = model_lstm.predict(X_test_lstm)
+
+
+plt.figure(figsize=(12, 6))
+plt.plot(y_test, label='Actual', linestyle='-', color='blue')
+plt.plot(predictions_rnn, label='Predicted (LSTM)', linestyle='-', color='orange')
+plt.title('Actual vs Predicted Stock Prices using LSTM')
+plt.xlabel('Time')
+plt.ylabel('Scaled Close Price')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+#Performance evaluations
+
+def calculate_and_print_accuracy(y_true, y_pred, model_name):
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
+    r2 = r2_score(y_true, y_pred)
+    accuracy_percentage = 100 * (1 - rmse / np.std(y_true))
+
+    print('Performance metrics for:',model_name)
+    print('Accuracy:',accuracy_percentage)
+    print('Mean Squared Error (MSE):', mse)
+    print('Root Mean Squared Error (RMSE):', rmse)
+    print('R squared values(R2): ',r2)
+    print('\n')
+
+    
+calculate_and_print_accuracy(y_test, predictions, 'CNN')
+
+calculate_and_print_accuracy(y_test, predictions_rnn, 'RNN')
+
+calculate_and_print_accuracy(y_test, predictions_lstm, 'LSTM')
